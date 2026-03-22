@@ -24,37 +24,32 @@ interface PropertyListing {
 const CONFIG = {
   baseUrl: "https://www.rumah123.com",
   targetCity: "samarinda",
+  // URL pattern: /{aksi}/{kota}/{tipe}/?page=N
   types: [
-    { slug: "jual/rumah", label: "rumah-jual" },
-    { slug: "sewa/rumah", label: "rumah-sewa" },
-    { slug: "jual/apartemen", label: "apartemen-jual" },
-    { slug: "sewa/kost", label: "kost-sewa" },
-    { slug: "jual/ruko", label: "ruko-jual" },
+    { slug: "jual/samarinda/rumah", label: "rumah-jual" },
+    { slug: "sewa/samarinda/rumah", label: "rumah-sewa" },
+    { slug: "jual/samarinda/apartemen", label: "apartemen-jual" },
+    { slug: "sewa/samarinda/kost", label: "kost-sewa" },
+    { slug: "jual/samarinda/ruko", label: "ruko-jual" },
   ],
-  maxPages: 5, // 5 halaman per tipe = ~100 listing per tipe
-  delayMs: 2000, // delay antar request supaya tidak kena rate limit
+  maxPages: 5,
+  delayMs: 2000,
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function parseHarga(raw: string): number {
   if (!raw) return 0;
-  const clean = raw.toLowerCase().replace(/[^0-9.,kmbt]/g, "");
-  if (raw.toLowerCase().includes("miliar") || raw.toLowerCase().includes("m")) {
-    const num = parseFloat(clean.replace(",", "."));
-    return Math.round(num * 1_000_000_000);
-  }
-  if (raw.toLowerCase().includes("juta")) {
-    const num = parseFloat(clean.replace(",", "."));
-    return Math.round(num * 1_000_000);
-  }
+  const lower = raw.toLowerCase();
+  const clean = raw.replace(/[^0-9,.]/g, "").replace(",", ".");
+  if (lower.includes("miliar")) return Math.round(parseFloat(clean) * 1_000_000_000);
+  if (lower.includes("juta")) return Math.round(parseFloat(clean) * 1_000_000);
   return parseInt(clean.replace(/\./g, ""), 10) || 0;
 }
 
 function extractKecamatan(lokasi: string): string {
   if (!lokasi) return "";
   const parts = lokasi.split(",").map((s) => s.trim());
-  // Format biasanya: "Kelurahan, Kecamatan, Kota"
   return parts.length >= 2 ? parts[parts.length - 2] : parts[0];
 }
 
@@ -74,27 +69,81 @@ async function scrapePage(
 
   try {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
-    await delay(1500);
+    await delay(3000);
 
-    // Tunggu listing cards muncul
-    await page.waitForSelector('[data-testid="card-listing"]', { timeout: 10000 })
-      .catch(() => console.log("[rumah123] No listings found on this page"));
+    // Scroll supaya lazy-load jalan
+    await page.evaluate(async () => {
+      for (let i = 0; i < 5; i++) {
+        window.scrollBy(0, 500);
+        await new Promise((r) => setTimeout(r, 400));
+      }
+      window.scrollTo(0, 0);
+    });
+    await delay(1000);
+
+    // Tunggu card pertama — pakai data-test-id (bukan data-testid!)
+    await page
+      .waitForSelector('[data-test-id="srp-listing-card-0"]', { timeout: 10000 })
+      .catch(() => console.log(`[rumah123] No cards found on: ${url}`));
 
     const listings = await page.$$eval(
-      '[data-testid="card-listing"]',
+      '[data-test-id^="srp-listing-card-"]',
       (cards, tipeLabel) => {
         return cards.map((card) => {
-          const judul = card.querySelector("h2, h3, .title")?.textContent?.trim() ?? "";
-          const harga = card.querySelector('[data-testid="card-price"], .price')?.textContent?.trim() ?? "";
-          const lokasi = card.querySelector('[data-testid="card-location"], .location')?.textContent?.trim() ?? "";
-          const luasTanah = card.querySelector('[aria-label*="Luas Tanah"], [data-testid*="land"]')?.textContent?.trim() ?? "";
-          const luasBangunan = card.querySelector('[aria-label*="Luas Bangunan"], [data-testid*="building"]')?.textContent?.trim() ?? "";
-          const kamarTidur = card.querySelector('[aria-label*="Kamar Tidur"], [data-testid*="bedroom"]')?.textContent?.trim() ?? "";
-          const kamarMandi = card.querySelector('[aria-label*="Kamar Mandi"], [data-testid*="bathroom"]')?.textContent?.trim() ?? "";
-          const linkEl = card.querySelector("a[href]");
-          const url = linkEl ? (linkEl as any).href : "";
+          // Judul
+          const titleEl = card.querySelector("h2, h3");
+          const judul = titleEl?.textContent?.trim() ?? "";
 
-          return { judul, harga, lokasi, luasTanah, luasBangunan, kamarTidur, kamarMandi, url, tipe: tipeLabel };
+          // URL listing
+          const linkEl = card.querySelector('a[href*="/properti/"]');
+          const href = linkEl ? (linkEl as HTMLAnchorElement).href : "";
+
+          // Harga
+          const hargaEl =
+            card.querySelector('[data-testid="ldp-text-price"]') ??
+            card.querySelector('[data-name="price-info"] span') ??
+            card.querySelector(".text-primary.font-bold");
+          const harga = hargaEl?.textContent?.trim() ?? "";
+
+          // Lokasi — scan elemen leaf yang mengandung "Samarinda"
+          let lokasi = "";
+          const allEls = card.querySelectorAll("span, div, p");
+          for (const el of Array.from(allEls)) {
+            const t = el.textContent?.trim() ?? "";
+            if (t.includes("Samarinda") && t.length < 100 && el.children.length === 0) {
+              lokasi = t;
+              break;
+            }
+          }
+
+          // Spesifikasi KT, KM, LT, LB
+          const specs = card.querySelectorAll('[data-test-id^="srp-listing-quick-label-"]');
+          const specTexts = Array.from(specs).map((s) => s.textContent?.trim() ?? "");
+
+          let kamarTidur = "";
+          let kamarMandi = "";
+          let luasTanah = "";
+          let luasBangunan = "";
+
+          for (const spec of specTexts) {
+            const lower = spec.toLowerCase();
+            if (lower.includes("kt") || lower.includes("kamar tidur")) kamarTidur = spec;
+            else if (lower.includes("km") || lower.includes("kamar mandi")) kamarMandi = spec;
+            else if (lower.includes("lt") || lower.includes("luas tanah")) luasTanah = spec;
+            else if (lower.includes("lb") || lower.includes("luas bangunan")) luasBangunan = spec;
+          }
+
+          return {
+            judul,
+            harga,
+            lokasi,
+            luasTanah,
+            luasBangunan,
+            kamarTidur,
+            kamarMandi,
+            url: href,
+            tipe: tipeLabel,
+          };
         });
       },
       tipe
@@ -102,7 +151,6 @@ async function scrapePage(
 
     for (const item of listings) {
       if (!item.judul && !item.harga) continue;
-
       results.push({
         judul: item.judul,
         tipe: item.tipe,
@@ -119,8 +167,13 @@ async function scrapePage(
         tanggal_scrape: today,
       });
     }
+
+    console.log(`  → ${results.length} listings captured`);
   } catch (err) {
-    console.error(`[rumah123] Error scraping ${url}:`, err instanceof Error ? err.message : String(err));
+    console.error(
+      `[rumah123] Error scraping ${url}:`,
+      err instanceof Error ? err.message : String(err)
+    );
   }
 
   return results;
@@ -133,13 +186,22 @@ async function main(): Promise<void> {
 
   const browser = await chromium.launch({
     headless: true,
-    args: ["--no-sandbox", "--disable-setuid-sandbox"],
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-blink-features=AutomationControlled",
+    ],
   });
 
   const context = await browser.newContext({
     userAgent:
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     locale: "id-ID",
+    viewport: { width: 1280, height: 900 },
+  });
+
+  await context.addInitScript(() => {
+    Object.defineProperty(navigator, "webdriver", { get: () => undefined });
   });
 
   const page = await context.newPage();
@@ -150,20 +212,20 @@ async function main(): Promise<void> {
     console.log(`\n[rumah123] Scraping: ${type.label}`);
 
     for (let pageNum = 1; pageNum <= CONFIG.maxPages; pageNum++) {
-      const url = `${CONFIG.baseUrl}/properti/${CONFIG.targetCity}/${type.slug}/?page=${pageNum}`;
+      const url = `${CONFIG.baseUrl}/${type.slug}/?page=${pageNum}`;
       console.log(`  Page ${pageNum}: ${url}`);
 
       const listings = await scrapePage(page, url, type.label);
 
       if (listings.length === 0) {
-        console.log(`  No more listings, stopping at page ${pageNum}`);
+        console.log(`  No listings found, stopping at page ${pageNum}`);
         break;
       }
 
       appendCSV(filename, listings as unknown as Record<string, unknown>[]);
       totalCaptured += listings.length;
+      console.log(`  Total so far: ${totalCaptured}`);
 
-      console.log(`  Captured ${listings.length} listings (total: ${totalCaptured})`);
       await delay(CONFIG.delayMs);
     }
   }
