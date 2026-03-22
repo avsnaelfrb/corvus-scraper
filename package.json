@@ -1,0 +1,23 @@
+{
+  "name": "corvus-scrapper",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/avsnaelfrb/corvus-scraper.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/avsnaelfrb/corvus-scraper/issues"
+  },
+  "homepage": "https://github.com/avsnaelfrb/corvus-scraper#readme",
+  "dependencies": {
+    "playwright": "^1.58.2"
+  }
+}
