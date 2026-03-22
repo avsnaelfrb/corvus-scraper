@@ -4,7 +4,9 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "scrape:rumah123": "ts-node src/scrapers/rumah123.ts",
+    "scrape:fashion": "ts-node src/scrapers/tokopedia-fashion.ts"
   },
   "repository": {
     "type": "git",
@@ -19,5 +21,10 @@
   "homepage": "https://github.com/avsnaelfrb/corvus-scraper#readme",
   "dependencies": {
     "playwright": "^1.58.2"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
   }
 }
