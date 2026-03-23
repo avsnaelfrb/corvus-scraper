@@ -4,36 +4,53 @@ import { appendCSV, timestampedFilename } from "../utils/storage";
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface PropertyListing {
-  judul: string;
-  tipe: string;
-  harga: string;
-  harga_raw: number;
-  lokasi: string;
-  kecamatan: string;
-  luas_tanah: string;
-  luas_bangunan: string;
-  kamar_tidur: string;
-  kamar_mandi: string;
-  sumber: string;
-  url: string;
-  tanggal_scrape: string;
+    judul: string;
+    tipe: string;
+    kota: string;
+    harga: string;
+    harga_raw: number;
+    lokasi: string;
+    kecamatan: string;
+    luas_tanah: string;
+    luas_bangunan: string;
+    kamar_tidur: string;
+    kamar_mandi: string;
+    sumber: string;
+    carport: string;
+    url: string;
+    tanggal_scrape: string;
 }
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
 const CONFIG = {
   baseUrl: "https://www.rumah123.com",
-  targetCity: "samarinda",
   // URL pattern: /{aksi}/{kota}/{tipe}/?page=N
   types: [
-    { slug: "jual/samarinda/rumah", label: "rumah-jual" },
-    { slug: "sewa/samarinda/rumah", label: "rumah-sewa" },
-    { slug: "jual/samarinda/apartemen", label: "apartemen-jual" },
-    { slug: "sewa/samarinda/kost", label: "kost-sewa" },
-    { slug: "jual/samarinda/ruko", label: "ruko-jual" },
+    // ── Samarinda ──────────────────────────────────────
+    { slug: "jual/samarinda/rumah",      label: "rumah-jual",      kota: "samarinda" },
+    { slug: "sewa/samarinda/rumah",      label: "rumah-sewa",      kota: "samarinda" },
+    { slug: "jual/samarinda/apartemen",  label: "apartemen-jual",  kota: "samarinda" },
+    { slug: "sewa/samarinda/kost",       label: "kost-sewa",       kota: "samarinda" },
+    { slug: "jual/samarinda/ruko",       label: "ruko-jual",       kota: "samarinda" },
+    { slug: "jual/samarinda/tanah",      label: "tanah-jual",      kota: "samarinda" },
+    { slug: "jual/samarinda/villa",      label: "villa-jual",      kota: "samarinda" },
+    { slug: "jual/samarinda/gudang",     label: "gudang-jual",     kota: "samarinda" },
+    // ── Balikpapan ─────────────────────────────────────
+    { slug: "jual/balikpapan/rumah",     label: "rumah-jual",      kota: "balikpapan" },
+    { slug: "sewa/balikpapan/rumah",     label: "rumah-sewa",      kota: "balikpapan" },
+    { slug: "jual/balikpapan/apartemen", label: "apartemen-jual",  kota: "balikpapan" },
+    { slug: "jual/balikpapan/tanah",     label: "tanah-jual",      kota: "balikpapan" },
+    { slug: "jual/balikpapan/ruko",      label: "ruko-jual",       kota: "balikpapan" },
+    // ── Bontang ────────────────────────────────────────
+    { slug: "jual/bontang/rumah",        label: "rumah-jual",      kota: "bontang" },
+    { slug: "jual/bontang/tanah",        label: "tanah-jual",      kota: "bontang" },
+    // ── Kutai Kartanegara ──────────────────────────────
+    { slug: "jual/kutai-kartanegara/rumah",  label: "rumah-jual",  kota: "kutai-kartanegara" },
+    { slug: "jual/kutai-kartanegara/tanah",  label: "tanah-jual",  kota: "kutai-kartanegara" },
   ],
-  maxPages: 5,
-  delayMs: 2000,
+  maxPages: 10,
+  delayMs: 2500, // sedikit lebih lambat karena lebih banyak request
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -62,7 +79,8 @@ function delay(ms: number): Promise<void> {
 async function scrapePage(
   page: import("playwright").Page,
   url: string,
-  tipe: string
+  tipe: string,
+  kota: string
 ): Promise<PropertyListing[]> {
   const results: PropertyListing[] = [];
   const today = new Date().toISOString().split("T")[0];
@@ -105,32 +123,33 @@ async function scrapePage(
             card.querySelector(".text-primary.font-bold");
           const harga = hargaEl?.textContent?.trim() ?? "";
 
-          // Lokasi — scan elemen leaf yang mengandung "Samarinda"
-          let lokasi = "";
-          const allEls = card.querySelectorAll("span, div, p");
-          for (const el of Array.from(allEls)) {
-            const t = el.textContent?.trim() ?? "";
-            if (t.includes("Samarinda") && t.length < 100 && el.children.length === 0) {
-              lokasi = t;
-              break;
-            }
-          }
+          // Lokasi — pakai selector spesifik
+          const lokasiEl = card.querySelector("p.text-left.font-medium");
+          const lokasi = lokasiEl?.textContent?.trim() ?? "";
 
-          // Spesifikasi KT, KM, LT, LB
-          const specs = card.querySelectorAll('[data-test-id^="srp-listing-quick-label-"]');
-          const specTexts = Array.from(specs).map((s) => s.textContent?.trim() ?? "");
-
-          let kamarTidur = "";
-          let kamarMandi = "";
+          // LT & LB
           let luasTanah = "";
           let luasBangunan = "";
+          const flexSpans = card.querySelectorAll("span.flex");
+          for (const span of Array.from(flexSpans)) {
+            const label = span.querySelector("span.text-greyText")?.textContent?.trim() ?? "";
+            const full = span.textContent?.trim() ?? "";
+            if (label.startsWith("LT")) luasTanah = full.replace(/LT\s*:\s*/, "").trim();
+            else if (label.startsWith("LB")) luasBangunan = full.replace(/LB\s*:\s*/, "").trim();
+          }
 
-          for (const spec of specTexts) {
-            const lower = spec.toLowerCase();
-            if (lower.includes("kt") || lower.includes("kamar tidur")) kamarTidur = spec;
-            else if (lower.includes("km") || lower.includes("kamar mandi")) kamarMandi = spec;
-            else if (lower.includes("lt") || lower.includes("luas tanah")) luasTanah = spec;
-            else if (lower.includes("lb") || lower.includes("luas bangunan")) luasBangunan = spec;
+          // KT, KM, Carport — dari SVG icon href
+          let kamarTidur = "";
+          let kamarMandi = "";
+          let carport = "";
+          const iconSpans = card.querySelectorAll("span.flex.items-center.gap-x-1");
+          for (const span of Array.from(iconSpans)) {
+            const svgUse = span.querySelector("use");
+            const iconHref = svgUse?.getAttribute("xlink:href") ?? "";
+            const val = span.textContent?.trim() ?? "";
+            if (iconHref.includes("bedroom")) kamarTidur = val;
+            else if (iconHref.includes("bathroom")) kamarMandi = val;
+            else if (iconHref.includes("carport")) carport = val;
           }
 
           return {
@@ -141,6 +160,7 @@ async function scrapePage(
             luasBangunan,
             kamarTidur,
             kamarMandi,
+            carport,
             url: href,
             tipe: tipeLabel,
           };
@@ -154,6 +174,7 @@ async function scrapePage(
       results.push({
         judul: item.judul,
         tipe: item.tipe,
+        kota: kota,
         harga: item.harga,
         harga_raw: parseHarga(item.harga),
         lokasi: item.lokasi,
@@ -163,6 +184,7 @@ async function scrapePage(
         kamar_tidur: item.kamarTidur,
         kamar_mandi: item.kamarMandi,
         sumber: "rumah123",
+        carport: item.carport,
         url: item.url,
         tanggal_scrape: today,
       });
@@ -182,7 +204,7 @@ async function scrapePage(
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
-  console.log("[rumah123] Starting scraper — Samarinda");
+  console.log("[rumah123] Starting scraper — Kaltim Regional");
 
   const browser = await chromium.launch({
     headless: true,
@@ -205,17 +227,17 @@ async function main(): Promise<void> {
   });
 
   const page = await context.newPage();
-  const filename = timestampedFilename("properti_samarinda", "csv");
+  const filename = timestampedFilename("properti_kaltim", "csv");
   let totalCaptured = 0;
 
   for (const type of CONFIG.types) {
-    console.log(`\n[rumah123] Scraping: ${type.label}`);
+    console.log(`\n[rumah123] Scraping: ${type.kota} / ${type.label}`);
 
     for (let pageNum = 1; pageNum <= CONFIG.maxPages; pageNum++) {
       const url = `${CONFIG.baseUrl}/${type.slug}/?page=${pageNum}`;
       console.log(`  Page ${pageNum}: ${url}`);
 
-      const listings = await scrapePage(page, url, type.label);
+      const listings = await scrapePage(page, url, type.label, type.kota);
 
       if (listings.length === 0) {
         console.log(`  No listings found, stopping at page ${pageNum}`);
